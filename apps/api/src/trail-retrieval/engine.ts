@@ -124,9 +124,12 @@ function tokens(value: string): string[] {
 function includesTerm(haystack: string, term: string): boolean {
   const normalizedTerm = normalize(term);
   if (!normalizedTerm) return false;
-  if (normalize(haystack).includes(normalizedTerm)) return true;
+  const normalizedHaystack = normalize(haystack);
+  if (` ${normalizedHaystack} `.includes(` ${normalizedTerm} `)) return true;
+  const termTokens = tokens(term);
+  if (termTokens.length === 0) return false;
   const haystackTokens = new Set(tokens(haystack));
-  return tokens(term).every((token) => haystackTokens.has(token));
+  return termTokens.every((token) => haystackTokens.has(token));
 }
 
 function overlapRatio(reference: string, observed: string): { score: number; matched: string[]; total: number } {

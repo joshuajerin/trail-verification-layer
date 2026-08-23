@@ -126,6 +126,19 @@ describe("deterministic TRAIL retrieval", () => {
     expect(result.rejectedNearMatches).toHaveLength(3);
   });
 
+  it("does not match short applicability terms inside unrelated words", () => {
+    const result = retrieve({
+      task: "Prepare a release summary.",
+      candidates: [WRONG_CHECKOUT_TRAIL],
+    });
+
+    expect(result.selectedTrail).toBeNull();
+    expect(result.applicableTrails).toEqual([]);
+    expect(result.rejectedNearMatches[0]?.rejectionReasons).toContain(
+      "applicability condition not met: task:any(route|checkout|worktree|branch|pull request|pr)",
+    );
+  });
+
   it("orders equal candidates by stable trail id regardless of input order", () => {
     const alpha = { ...WRONG_CHECKOUT_TRAIL, id: "trail-alpha", confidence: 0.9 } satisfies Trail;
     const zulu = { ...WRONG_CHECKOUT_TRAIL, id: "trail-zulu", confidence: 0.9 } satisfies Trail;
