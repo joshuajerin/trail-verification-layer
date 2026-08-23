@@ -15,8 +15,9 @@ const providerLabel = process.env.TRAIL_PROVIDER_LABEL ?? (openAiBaseUrl.include
 
 export const config = {
   port: Number(process.env.TRAIL_API_PORT ?? 4317),
-  allowedOrigin: process.env.TRAIL_ALLOWED_ORIGIN ?? "http://127.0.0.1:4173",
+  allowedOrigin: process.env.TRAIL_ALLOWED_ORIGIN ?? "",
   databasePath: process.env.TRAIL_DATABASE_PATH ?? resolve(projectRoot, ".trail/trail.db"),
+  postgresUrl: process.env.TRAIL_POSTGRES_URL ?? "",
   corpusPath: resolve(projectRoot, "corpus/public"),
   benchmarkPath: resolve(projectRoot, "benchmarks"),
   openAiKey,
@@ -27,6 +28,13 @@ export const config = {
   reasoningEffort: (process.env.OPENAI_REASONING_EFFORT ?? "medium") as "low" | "medium" | "high",
   codexSessionsPath: resolve(process.env.HOME ?? "", ".codex/sessions"),
   claudeSessionsPath: resolve(process.env.HOME ?? "", ".claude/projects"),
+  apiKey: process.env.TRAIL_API_KEY ?? "",
+  ciKey: process.env.TRAIL_CI_KEY ?? "",
+  requireApiKey: process.env.TRAIL_REQUIRE_API_KEY === "true" || process.env.NODE_ENV === "production",
+  rateLimitMax: Number(process.env.TRAIL_RATE_LIMIT_MAX ?? 120),
+  rateLimitWindow: process.env.TRAIL_RATE_LIMIT_WINDOW ?? "1 minute",
+  privateHistory: process.env.TRAIL_PRIVATE_HISTORY === "true",
+  routeSessionTtlMs: Number(process.env.TRAIL_ROUTE_SESSION_TTL_MS ?? 15 * 60 * 1000),
 };
 
 export function preflight() {
@@ -47,5 +55,6 @@ export function preflight() {
       codex: existsSync(config.codexSessionsPath),
       claude: existsSync(config.claudeSessionsPath),
     },
+    routerAuth: config.requireApiKey ? (config.apiKey ? "configured" : "missing") : "local-development",
   };
 }

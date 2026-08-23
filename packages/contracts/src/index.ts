@@ -13,6 +13,7 @@ export const EnvironmentSchema = z.object({
   branch: z.string().min(1).optional(),
   head: z.string().regex(/^[a-f0-9]{7,40}$/i).optional(),
   runtime: z.string().min(1).optional(),
+  deployment: z.string().min(1).optional(),
   authSurface: z.string().min(1).optional(),
 });
 export type TrailEnvironment = z.infer<typeof EnvironmentSchema>;
@@ -71,7 +72,11 @@ export const TrailSchema = z.object({
   reviewedAt: z.string().datetime().optional(),
   tags: z.array(z.string()).default([]),
 });
-export type Trail = z.infer<typeof TrailSchema>;
+// WorkflowRoute is the product name. Trail remains a compatibility alias for
+// existing reviewed corpus files while curators migrate their filenames.
+export const WorkflowRouteSchema = TrailSchema;
+export type WorkflowRoute = z.infer<typeof WorkflowRouteSchema>;
+export type Trail = WorkflowRoute;
 
 export const RetrievalRequestSchema = z.object({
   intent: z.string().min(3),
@@ -178,9 +183,19 @@ export const EvidenceObservationSchema = z.object({
   expected: z.string().min(1),
   observed: z.string(),
   passed: z.boolean(),
+  attestation: z.enum(["agent", "harness", "ci"]).default("agent"),
   timestamp: z.string().datetime(),
 });
 export type EvidenceObservation = z.infer<typeof EvidenceObservationSchema>;
+
+export const EvidenceArtifactSchema = z.object({
+  evidenceId: z.string().min(1),
+  verifier: z.string().min(1),
+  observed: z.string(),
+  passed: z.boolean(),
+  attestation: z.enum(["agent", "harness", "ci"]).default("agent"),
+});
+export type EvidenceArtifact = z.infer<typeof EvidenceArtifactSchema>;
 
 export const ContextBundleSchema = z.object({
   schemaVersion: z.literal("1.0"),
@@ -232,8 +247,9 @@ export const ContextCompileRequestSchema = z.object({
 export type ContextCompileRequest = z.infer<typeof ContextCompileRequestSchema>;
 
 export const ContextVerifyRequestSchema = z.object({
-  workspace: z.string().min(1),
+  workspace: z.string().min(1).optional(),
   adapters: z.array(z.string().min(1)).default([]),
+  artifacts: z.array(EvidenceArtifactSchema).default([]),
 });
 export type ContextVerifyRequest = z.infer<typeof ContextVerifyRequestSchema>;
 
@@ -243,5 +259,6 @@ export const ContextVerificationSchema = z.object({
   status: z.enum(["passed", "blocked"]),
   observations: z.array(EvidenceObservationSchema),
   missingEvidence: z.array(z.string()),
+  releaseEligible: z.boolean().default(false),
 });
 export type ContextVerification = z.infer<typeof ContextVerificationSchema>;

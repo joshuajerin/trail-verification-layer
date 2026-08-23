@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { z } from "zod";
-import type { ContextBundle, ContextVerification, EvidenceContract, EvidenceObservation } from "@trail/contracts";
+import type { ContextBundle, ContextVerification, EvidenceArtifact, EvidenceContract, EvidenceObservation } from "@trail/contracts";
 import { TrailDatabase } from "./database.js";
 import { detectEnvironment } from "./context.js";
 
@@ -45,8 +45,8 @@ function changedFiles(workspace: string) {
   return result.output.split("\n").filter(Boolean).map((line) => line.slice(3).split(" -> ").at(-1) ?? "");
 }
 
-function observation(bundle: ContextBundle, evidence: EvidenceContract, verifier: string, observed: string, passed: boolean): EvidenceObservation {
-  return { id: randomUUID(), bundleId: bundle.id, evidenceId: evidence.id, verifier, expected: evidence.expected, observed, passed, timestamp: new Date().toISOString() };
+function observation(bundle: ContextBundle, evidence: EvidenceContract, verifier: string, observed: string, passed: boolean, attestation: EvidenceObservation["attestation"] = "harness"): EvidenceObservation {
+  return { id: randomUUID(), bundleId: bundle.id, evidenceId: evidence.id, verifier, expected: evidence.expected, observed, passed, attestation, timestamp: new Date().toISOString() };
 }
 
 function selected<T extends { name: string }>(items: T[], requested: string[]) {
@@ -125,5 +125,47 @@ export async function verifyContext(db: TrailDatabase, bundle: ContextBundle, wo
     status: passed ? "passed" : "blocked",
     observations,
     missingEvidence: bundle.evidence.filter((item, index) => item.required && !evidencePasses[index]).map((item) => item.id),
+    releaseEligible: passed,
+  };
+}
+
+/**
+ * Validates evidence sent by a remote harness without executing anything on the
+ * router host. Agent-reported artifacts are useful progress signals, but only
+ * explicitly trusted attestation kinds can make a route release-eligible.
+ */
+export function verifyReportedEvidence(
+  db: TrailDatabase,
+  bundle: ContextBundle,
+  artifacts: EvidenceArtifact[],
+  trustedAttestations: Array<EvidenceArtifact["attestation"]>,
+): ContextVerification {
+  const observations = artifacts
+    .filter((artifact) => bundle.evidence.some((evidence) => evidence.id === artifact.evidenceId && evidence.required))
+    .map((artifact) => {
+      const evidence = bundle.evidence.find((item) => item.id === artifact.evidenceId)!;
+      const trusted = trustedAttestations.includes(artifact.attestation);
+      return observation(
+        bundle,
+        evidence,
+        `${trusted ? "attested" : "advisory"}:${artifact.verifier}`,
+        artifact.observed,
+        trusted && artifact.passed,
+        artifact.attestation,
+      );
+    });
+  for (const item of observations) db.saveEvidenceObservation(item);
+  const missingEvidence = bundle.evidence
+    .filter((evidence) => evidence.required)
+    .filter((evidence) => !observations.some((item) => item.evidenceId === evidence.id && item.passed))
+    .map((evidence) => evidence.id);
+  const releaseEligible = missingEvidence.length === 0 && bundle.evidence.some((evidence) => evidence.required);
+  return {
+    bundleId: bundle.id,
+    passed: releaseEligible,
+    status: releaseEligible ? "passed" : "blocked",
+    observations,
+    missingEvidence,
+    releaseEligible,
   };
 }

@@ -9,9 +9,9 @@
 5. The draft remains private until review. Approval writes one redacted `.trail.json` file into the public corpus.
 6. Retrieval applies mandatory environment filters, FTS/BM25 intent ranking, failure/trigger scoring, and policy weights. When configured, `gpt-5.6-luna` reranks only this admitted set using a locally redacted payload.
 7. The context compiler preserves the current request, source-anchors its directives, and deterministically combines it with the admitted human trail into an immutable execution brief.
-8. Codex or Claude receives that brief through MCP, HTTP, or CLI. The current request remains highest priority.
-9. Human-owned evidence adapters independently inspect the workspace. Agent prose is never evidence.
-10. Evidence gates decide whether to reroute once, stop, or mark the exact PR commit eligible.
+8. Any MCP-capable harness receives that brief from the hosted Streamable HTTP router or the local stdio bridge. The current request remains highest priority.
+9. Human-owned evidence adapters independently inspect the workspace. Agent prose is advisory, never release evidence.
+10. Evidence gates decide whether to reroute once, stop, or let trusted CI attest the exact PR commit as eligible.
 
 ## Trust boundaries
 
@@ -25,7 +25,7 @@
 
 ## Core records
 
-- `Trail`: intent, environment, triggers, failure signatures, ordered steps, evidence, applicability, invalidators, outcome, and provenance.
+- `WorkflowRoute` (stored as the compatibility `Trail` contract during migration): intent, environment, triggers, failure signatures, ordered steps, evidence, applicability, invalidators, outcome, and provenance.
 - `IngestionPreview`: detected format, locally redacted excerpt, signal classes, and review requirement.
 - `RunEvent`: append-only timeline for baseline, guided, or system events.
 - `RetrievalPolicy`: immutable version with environment, lexical, failure, and evidence weights.
@@ -33,26 +33,11 @@
 - `ContextBundle`: immutable original request, source-backed directives, route, evidence contract, provenance, compiled prompt, and recovery lineage.
 - `EvidenceObservation`: timestamped verifier output with expected, observed, and pass/fail state.
 
-## API
+## Hosted interface
 
-- `GET /api/health`
-- `GET /api/trails`
-- `GET /api/policies`
-- `POST /api/sources/index`
-- `POST /api/ingestions/preview`
-- `POST /api/ingestions/:id/extract`
-- `POST /api/trails/:id/approve`
-- `POST /api/retrieve`
-- `POST /api/context/compile`
-- `GET /api/context/:id`
-- `POST /api/context/:id/recover`
-- `POST /api/context/:id/verify`
-- `POST /api/runs`
-- `GET /api/runs/:id`
-- `GET /api/runs/:id/events` (SSE)
-- `POST /api/policies/propose`
-- `POST /api/policies/:id/evaluate`
-- `POST /api/benchmarks/run`
+- `GET /health` reports router availability without exposing corpus or prompts.
+- `GET|POST|DELETE /mcp` is standard MCP Streamable HTTP. It exposes exactly `trail_route`, `trail_recover`, and `trail_verify`.
+- `POST /v1/routes/:id/verify` accepts only CI/signed-harness evidence with both router and CI credentials. It is not an agent-facing MCP tool.
 
 ## Intentional v1 limits
 

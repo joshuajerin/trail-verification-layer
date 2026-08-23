@@ -11,13 +11,16 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@fastify/cors": "^10.1.0",
+    "@fastify/rate-limit": "^10.3.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@trail/contracts": "workspace:*",
     "fastify": "^5.6.0",
     "openai": "^5.19.1",
+    "pg": "^8.23.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "tsx": "^4.20.5"
   }
 }

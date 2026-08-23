@@ -171,6 +171,11 @@ export class TrailDatabase {
     return row ? JSON.parse(row.body_json) as ContextBundle : null;
   }
 
+  deleteExpiredContextBundles(cutoff: string) {
+    const result = this.db.prepare("DELETE FROM context_bundles WHERE created_at < ?").run(cutoff);
+    return Number(result.changes);
+  }
+
   saveEvidenceObservation(observation: EvidenceObservation) {
     this.db.prepare("INSERT INTO evidence_observations (id, bundle_id, evidence_id, body_json, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(observation.id, observation.bundleId, observation.evidenceId, JSON.stringify(observation), observation.timestamp);

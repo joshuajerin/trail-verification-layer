@@ -207,11 +207,30 @@ export async function compileContext(db: TrailDatabase, request: ContextCompileR
   return { bundle: validated, provider: { intentExtraction: current.providerUsed, reranked }, matches, rejected: finalRejected };
 }
 
-export async function recoverContext(db: TrailDatabase, bundle: ContextBundle, failure: string, evidenceState: Record<string, boolean>) {
+export async function recoverContext(
+  db: TrailDatabase,
+  bundle: ContextBundle,
+  failure: string,
+  evidenceState: Record<string, boolean>,
+  currentEnvironment: TrailEnvironment = {},
+) {
   if (bundle.recoveryCount >= 1) {
     const blocked = ContextBundleSchema.parse({ ...bundle, id: randomUUID(), parentId: bundle.id, status: "blocked", failure, recoveryCount: 1, createdAt: new Date().toISOString(), compiledPrompt: `${bundle.compiledPrompt}\n\nRECOVERY LIMIT REACHED\nStop and escalate; no second reroute is permitted.` });
     db.saveContextBundle(blocked);
     return { bundle: blocked, provider: { intentExtraction: false, reranked: false }, matches: [], rejected: [] };
   }
-  return compileContext(db, { task: bundle.originalPrompt, environment: bundle.environment, trigger: "failure", failure, evidenceState }, { parentId: bundle.id, recoveryCount: 1 });
+  return compileContext(
+    db,
+    {
+      task: bundle.originalPrompt,
+      // The recovery call wins for values that can legitimately change during a
+      // run (for example, branch or deployed revision). The original route
+      // remains immutable and linked as the parent bundle.
+      environment: { ...bundle.environment, ...currentEnvironment },
+      trigger: "failure",
+      failure,
+      evidenceState,
+    },
+    { parentId: bundle.id, recoveryCount: 1 },
+  );
 }

@@ -1,0 +1,7 @@
+.git
+.gstack
+.trail
+apps/web
+node_modules
+coverage
+.env

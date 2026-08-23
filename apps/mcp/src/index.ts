@@ -1,102 +1,62 @@
 #!/usr/bin/env node
-import { createInterface } from "node:readline";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
 
-const apiBase = process.env.TRAIL_API_BASE ?? "http://127.0.0.1:4317";
+const routerUrl = process.env.TRAIL_ROUTER_URL ?? "http://127.0.0.1:4317/mcp";
+const apiKey = process.env.TRAIL_API_KEY ?? "";
 
-type RpcRequest = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
+const contextSchema = {
+  client: z.string().min(1).optional(), repository: z.string().min(1).optional(), branch: z.string().min(1).optional(),
+  revision: z.string().regex(/^[a-f0-9]{7,40}$/i).optional(), platform: z.string().min(1).optional(), runtime: z.string().min(1).optional(),
+  workspace: z.string().min(1).optional(), deployment: z.string().min(1).optional(),
+};
 
-const tools = [
-  {
-    name: "trail_build_context",
-    description: "Build a source-backed execution brief from the current request and approved human context.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["task"],
-      properties: {
-        task: { type: "string", minLength: 3 },
-        workspace: { type: "string" },
-        environment: { type: "object", additionalProperties: { type: "string" } },
-        trigger: { type: "string", enum: ["start", "failure", "release"] },
-        failure: { type: "string" },
-        evidenceState: { type: "object", additionalProperties: { type: "boolean" } },
-      },
-    },
-  },
-  {
-    name: "trail_recover",
-    description: "Request the single bounded recovery route after an observed failure.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["bundleId", "failure"],
-      properties: {
-        bundleId: { type: "string" },
-        failure: { type: "string" },
-        evidenceState: { type: "object", additionalProperties: { type: "boolean" } },
-      },
-    },
-  },
-  {
-    name: "trail_verify",
-    description: "Run human-approved evidence adapters. Agent prose cannot satisfy this release gate.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      required: ["bundleId", "workspace"],
-      properties: {
-        bundleId: { type: "string" },
-        workspace: { type: "string" },
-        adapters: { type: "array", items: { type: "string" } },
-      },
-    },
-  },
-];
+const client = new Client({ name: "trail-stdio-bridge", version: "1.0.0" });
+const transportOptions = apiKey ? { requestInit: { headers: { Authorization: `Bearer ${apiKey}` } } } : {};
+const transport = new StreamableHTTPClientTransport(new URL(routerUrl), transportOptions);
+// The SDK's transport declaration is compiled without exactOptionalPropertyTypes,
+// while this workspace enables it. Runtime transport compatibility is standard MCP.
+await client.connect(transport as never);
 
-async function request(path: string, body: unknown) {
-  const response = await fetch(`${apiBase}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const payload = await response.json() as Record<string, unknown>;
-  if (!response.ok) throw new Error(String(payload.error ?? `TRAIL API returned ${response.status}`));
-  return payload;
+async function forward(name: string, args: Record<string, unknown>): Promise<any> {
+  const result = await client.callTool({ name, arguments: args });
+  if ("content" in result) return result;
+  return { content: [{ type: "text" as const, text: JSON.stringify(result) }], isError: true };
 }
 
-async function callTool(name: string, args: Record<string, unknown>) {
-  if (name === "trail_build_context") return request("/api/context/compile", args);
-  if (name === "trail_recover") {
-    const { bundleId, ...body } = args;
-    return request(`/api/context/${String(bundleId)}/recover`, body);
-  }
-  if (name === "trail_verify") {
-    const { bundleId, ...body } = args;
-    return request(`/api/context/${String(bundleId)}/verify`, body);
-  }
-  throw new Error(`Unknown tool: ${name}`);
-}
+const server = new McpServer(
+  { name: "trail-stdio-bridge", version: "1.0.0" },
+  { instructions: "This is a thin bridge to the hosted TRAIL router. Use trail_route at task start, trail_recover after failures, and trail_verify before completion." },
+);
 
-function send(message: unknown) { process.stdout.write(`${JSON.stringify(message)}\n`); }
+server.registerTool("trail_route", {
+  description: "Forward a task and safe working context to the hosted TRAIL router.",
+  inputSchema: {
+    task: z.string().min(3), phase: z.enum(["start", "failure", "release"]).default("start"), context: z.object(contextSchema).default({}),
+    failure: z.string().min(1).optional(), completed_checkpoints: z.array(z.string().min(1)).default([]),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: false },
+}, async (args) => (await forward("trail_route", args)) as never);
 
-async function handle(message: RpcRequest) {
-  if (message.method === "notifications/initialized") return;
-  const id = message.id ?? null;
-  try {
-    if (message.method === "initialize") {
-      send({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "trail", version: "0.1.0" } } });
-    } else if (message.method === "tools/list") {
-      send({ jsonrpc: "2.0", id, result: { tools } });
-    } else if (message.method === "tools/call") {
-      const params = message.params ?? {};
-      const result = await callTool(String(params.name ?? ""), (params.arguments ?? {}) as Record<string, unknown>);
-      send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result } });
-    } else if (message.id !== undefined) {
-      send({ jsonrpc: "2.0", id, error: { code: -32601, message: `Method not found: ${message.method}` } });
-    }
-  } catch (error) {
-    send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: error instanceof Error ? error.message : "TRAIL tool failed" }], isError: true } });
-  }
-}
+server.registerTool("trail_recover", {
+  description: "Forward one observed failure to the hosted TRAIL router for bounded recovery.",
+  inputSchema: {
+    route_id: z.string().uuid(), failure: z.string().min(1), context: z.object(contextSchema).default({}),
+    completed_checkpoints: z.array(z.string().min(1)).default([]),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: false },
+}, async (args) => (await forward("trail_recover", args)) as never);
 
-const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
-lines.on("line", (line) => {
-  try { void handle(JSON.parse(line) as RpcRequest); }
-  catch { send({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }); }
-});
+server.registerTool("trail_verify", {
+  description: "Forward structured evidence to the hosted TRAIL router. Agent evidence is advisory until trusted CI attests it.",
+  inputSchema: {
+    route_id: z.string().uuid(), revision: z.string().regex(/^[a-f0-9]{7,40}$/i).optional(),
+    evidence: z.array(z.object({ evidence_id: z.string().min(1), verifier: z.string().min(1), observed: z.string(), passed: z.boolean() })).default([]),
+  },
+  annotations: { readOnlyHint: true, idempotentHint: false },
+}, async (args) => (await forward("trail_verify", args)) as never);
+
+await server.connect(new StdioServerTransport());

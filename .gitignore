@@ -12,3 +12,4 @@ apps/web/playwright-report/
 apps/web/test-results/
 
 .gstack/
+supabase/.temp/

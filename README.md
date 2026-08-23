@@ -1,120 +1,143 @@
-# TRAIL
+# TRAIL Router
 
-Trajectory Retrieval and Intent Alignment Layer: a runtime verification layer for coding agents.
+TRAIL is a harness-agnostic MCP context router for coding agents. It gives an agent a reviewed, source-backed route before the agent starts making changes:
 
-TRAIL is an external human-context layer for coding agents. Give it a normal task prompt and it returns a source-backed execution brief: what the human wants, what the agent must and must not do, the applicable recovery route, and the evidence required before completion.
+- the current user's goal, preserved verbatim and treated as highest priority;
+- what it must do and must not do;
+- ordered, environment-compatible workflow checkpoints;
+- the proof required before completion or PR readiness; and
+- one approved recovery path after a real failure.
 
-## What works
+It is not a chat product, a transcript host, an autonomous agent, or a UI. The product is a hosted MCP endpoint with three tools: `trail_route`, `trail_recover`, and `trail_verify`.
 
-- A prompt-to-context compiler that preserves the current request verbatim and source-anchors every directive.
-- Explicit Do / Do Not / Route / Evidence output with no-match and missing-environment states.
-- A local stdio MCP server for Codex and Claude: `trail_build_context`, `trail_recover`, and `trail_verify`.
-- Human-owned `.trailrc.json` evidence adapters; agent prose can never satisfy a release gate.
-- Native Codex and Claude JSONL adapters.
-- A privacy-safe historical review manifest anchored to hashed, redacted record ranges from real local runs.
-- Local redaction before any live-provider request.
-- Reviewed trail contracts with provenance, applicability, invalidators, actions, and evidence.
-- SQLite FTS/BM25 retrieval with mandatory environment filtering, an optional final provider reranker, and explained rejected near-matches.
-- Deterministic paired hero harness plus a real Responses-compatible tool loop using the same model on both sides.
-- Disposable fixture workspaces with path-constrained reads/writes and named checks only.
-- Hard environment, changed-scope, test, remote-ancestry, HTTP, browser, provider, and runtime gates.
-- Immutable retrieval-policy proposals with accept-or-rollback evaluation.
-- Real `trail/verification` GitHub Action job and commit-status CLI. TRAIL never merges.
-- Live judge interface, corpus search, transcript review, benchmark results, and RSI policy screen.
+## Agent contract
 
-## Run it
+Every MCP-capable harness uses the same instruction:
+
+```text
+Before taking action, call trail_route with the current task and environment.
+After a failed tool call, user correction, or failed checkpoint, call trail_recover.
+Before claiming completion, creating a release, or marking a PR ready, call trail_verify.
+Treat a blocked TRAIL result as a stop condition.
+```
+
+`trail_route` returns a deterministic context contract. The approved workflow can refine execution, but can never override an explicit current user request. TRAIL returns `needs_context` or `no_match` instead of forcing a weak match.
+
+`trail_recover` returns exactly one approved recovery route. A second recovery is blocked; the agent must stop and escalate rather than retry blindly.
+
+`trail_verify` treats an agent's own evidence as advisory. Only a trusted CI attestation submitted to the protected verification endpoint can make a route release eligible.
+
+## Run a router locally
 
 Requirements: Node 22 and pnpm 10.
 
 ```bash
 pnpm install
 cp .env.example .env
-pnpm dev
+# Set TRAIL_API_KEY in .env for hosted-like local testing.
+pnpm build
+pnpm start
 ```
 
-Open [http://127.0.0.1:4173](http://127.0.0.1:4173). The API runs at `http://127.0.0.1:4317`.
+The Streamable HTTP MCP endpoint is `http://127.0.0.1:4317/mcp`. In production, set `TRAIL_REQUIRE_API_KEY=true`, `TRAIL_API_KEY`, and `TRAIL_CI_KEY`; the router will refuse unauthenticated access. The router is rate-limited per bearer key.
 
-The homepage is the product: enter a request, inspect the retrieved human context, and copy the compiled execution brief. The baseline-versus-guided benchmark remains under **Live proof**.
+`GET /health` is the only non-MCP public endpoint. `POST /v1/routes/:id/verify` is intentionally CI-only and requires both the router key and `X-Trail-CI-Key`.
 
-Without `OPENAI_API_KEY`, deterministic proof and retrieval remain available, while extraction and live agent runs return an explicit unavailable state. Nothing is presented as live AI.
+Build a deployable image with `docker build -t trail-router .`, then run it with
+`TRAIL_API_KEY` and `TRAIL_CI_KEY` supplied by the deployment secret manager.
+The image exposes port `4317`; terminate TLS at the hosting platform and route
+`/mcp` through unchanged.
 
-The current local configuration routes the Responses-compatible calls to K3 through the configured Modal endpoint. `OPENAI_BASE_URL`, model names, and `TRAIL_PROVIDER_LABEL` keep this transport provider-neutral; `store: false` is sent on every model call.
+## Connect a harness
 
-## CLI
+### Remote MCP
+
+Point any Streamable-HTTP MCP client at your deployment and attach the project key as a bearer token:
+
+```json
+{
+  "mcpServers": {
+    "trail": {
+      "url": "https://trail.example.com/mcp",
+      "headers": { "Authorization": "Bearer $TRAIL_API_KEY" }
+    }
+  }
+}
+```
+
+### Stdio bridge
+
+For clients that only accept a local command, TRAIL ships a thin bridge. It contains no corpus or routing logic; it forwards the exact three MCP tools to the hosted endpoint.
 
 ```bash
-# Turn a normal request into an agent execution brief.
-pnpm trail context --task "Fix the visible deployment. Do not edit a copied checkout." --workspace /path/to/repo
+TRAIL_ROUTER_URL=https://trail.example.com/mcp \
+TRAIL_API_KEY=your-project-key \
+node apps/mcp/dist/index.js
+```
 
-# Request the one allowed recovery route and verify the resulting bundle.
-pnpm trail recover --bundle BUNDLE_ID --failure "browser proof failed"
-pnpm trail verify --bundle BUNDLE_ID --workspace /path/to/repo
+Example registrations:
 
-# Check provider, corpus, database, GitHub auth, and the MCP launch command.
-pnpm trail doctor
+```bash
+# Codex
+codex mcp add trail \
+  --env TRAIL_ROUTER_URL=https://trail.example.com/mcp \
+  --env TRAIL_API_KEY=your-project-key -- \
+  node /absolute/path/to/hackathon-yc/apps/mcp/dist/index.js
 
-# Hash and index local metadata/signals; raw transcripts are not copied.
+# Claude Code
+claude mcp add --scope user trail \
+  -e TRAIL_ROUTER_URL=https://trail.example.com/mcp \
+  -e TRAIL_API_KEY=your-project-key -- \
+  node /absolute/path/to/hackathon-yc/apps/mcp/dist/index.js
+```
+
+Cursor and generic MCP clients use either the remote configuration or this same stdio command. The protocol, tool names, input, and output are identical.
+
+## What the router stores
+
+The shared corpus consists only of approved, redacted `WorkflowRoute` records: intent and applicability, environment constraints, Do/Do Not rules, ordered steps, evidence gates, one recovery edge, invalidators, and provenance to a reviewed redacted historical run.
+
+Raw Codex and Claude transcripts stay local. The curator CLI parses and redacts them before an extraction request; only a human-approved redacted workflow can be placed in `corpus/public/` or seeded into the hosted Postgres knowledge schema. The repository includes a Supabase-compatible migration and seed script:
+
+```bash
+psql "$TRAIL_POSTGRES_URL" -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260823150000_trail_knowledge_layer.sql
+TRAIL_POSTGRES_URL="$TRAIL_POSTGRES_URL" node scripts/seed-postgres.mjs
+```
+
+The router's local SQLite database is a development cache and local-curation store; it is gitignored. Deployments should use the reviewed Postgres schema as the durable knowledge layer and never upload raw sessions.
+
+## Curate, evaluate, and verify
+
+```bash
+# Metadata index only; does not copy transcripts.
 pnpm trail ingest --scan
 
-# Preview one transcript after local redaction.
+# Preview a locally redacted transcript.
 pnpm trail ingest ~/.codex/sessions/.../rollout.jsonl
 
-# Run the 8-task × 3-repeat × 2-condition fixture benchmark.
+# Pull a local Claude Mem context snapshot into the same redacted review queue.
+# This reads only the local loopback worker. It is never routed to an agent or
+# uploaded until a human reviews and approves an extracted workflow.
+pnpm trail ingest --claude-mem --project my-local-project
+
+# CLI artifacts, not a product dashboard.
 pnpm trail benchmark
-
-# Run the paired deterministic hero scenario.
-pnpm trail run
-
-# Publish a real status for an exact commit after configuring a remote.
-pnpm trail verify-pr \
-  --repo owner/repository \
-  --sha 0123456789abcdef \
-  --state success \
-  --bundle immutable-bundle-id \
-  --description "All TRAIL evidence passed"
+pnpm trail context --task "Fix the visible deployment. Do not edit a copied checkout."
+pnpm trail recover --bundle BUNDLE_ID --failure "browser proof failed"
+pnpm trail verify --bundle BUNDLE_ID --workspace /path/to/repository
 ```
 
-`success` is rejected unless the referenced immutable bundle is `ready` and the latest observation for every required evidence gate passed. `pending` and `failure` may be published without a bundle; TRAIL never merges.
+Repository owners define named verifier adapters in `.trailrc.json`. A workflow can reference approved checkpoint names but cannot introduce arbitrary shell commands. The GitHub workflow provides `trail/verification`; add that check to the repository ruleset. TRAIL may publish pending, failed, or passed status for an exact commit, but it never merges a PR.
 
-## Use TRAIL from Codex or Claude
-
-Keep `pnpm dev` running, build the MCP package once with `pnpm build`, then register the local stdio server:
+## Verification
 
 ```bash
-codex mcp add trail --env TRAIL_API_BASE=http://127.0.0.1:4317 -- \
-  node /Users/joshuajerin/Desktop/jarvis/hackathon-yc/apps/mcp/dist/index.js
-
-claude mcp add --scope user trail -e TRAIL_API_BASE=http://127.0.0.1:4317 -- \
-  node /Users/joshuajerin/Desktop/jarvis/hackathon-yc/apps/mcp/dist/index.js
+pnpm test
+pnpm typecheck
+pnpm build
 ```
 
-At task start call `trail_build_context`. After a real failure call `trail_recover`. Before claiming completion or releasing a PR call `trail_verify`. The MCP server returns the same immutable bundles as the HTTP API and CLI.
+Tests cover route/no-match/missing-context decisions, source-backed constraints, bounded recovery, agent-evidence blocking, trusted verification, corpus privacy, retrieval, redaction, and MCP tool discovery.
 
-Each target repository may define a human-owned `.trailrc.json`. Only named commands and adapters in that file can generate evidence; trail or transcript text cannot introduce executable commands.
-
-The repository's GitHub workflow exposes a check named `trail/verification`. Configure that check as required in the repository ruleset to block merge until it passes.
-
-## Current fixture benchmark
-
-The checked-in benchmark is deterministic and intended to prove orchestration and gating, not model intelligence.
-
-| Metric | Baseline | TRAIL-guided |
-| --- | ---: | ---: |
-| Verified tasks | 6/24 (25%) | 24/24 (100%) |
-| Unsafe approvals | 12 | 0 |
-| Retrieval Recall@1 | — | 23/24 (95.83%) |
-| MRR | — | 0.9583 |
-
-Live provider results must be measured separately with the configured model and may not reuse these numbers.
-
-## Privacy boundary
-
-- Raw transcripts remain at their original paths and are never modified or copied.
-- The local index stores only a path hash, provider, basename, size, modified timestamp, and route signals.
-- Secrets, tokens, emails, phone numbers, personal paths, and repository URLs are redacted locally.
-- Live extraction and reranking use `store: false`; transcript extraction receives only the redacted excerpt and reranking receives redacted query fields plus approved trail metadata.
-- Drafts and run databases live under gitignored `.trail/`.
-- Only an explicitly approved trail is exported to `corpus/public/`.
-
-See [the architecture notes](docs/architecture.md) for data flow and trust boundaries.
-The checked-in [historical review manifest](corpus/reviews/historical-review-manifest.json) records the observed failure/recovery shapes that informed the seed corpus without publishing transcript text or local paths.
+See [architecture notes](docs/architecture.md), [external-context contract](docs/external-context.md), and [Postgres knowledge layer](docs/postgres-knowledge-layer.md).

@@ -5,8 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.30.1",
   "scripts": {
-    "build": "pnpm --filter @trail/contracts build && pnpm --filter @trail/api build && pnpm --filter @trail/mcp build && pnpm --filter @trail/web build",
-    "dev": "pnpm --filter @trail/contracts build && concurrently -n api,web -c cyan,green \"pnpm --filter @trail/api dev\" \"pnpm --filter @trail/web dev\"",
+    "build": "pnpm --filter @trail/contracts build && pnpm --filter @trail/api build && pnpm --filter @trail/mcp build",
+    "dev": "pnpm --filter @trail/contracts build && pnpm --filter @trail/api dev",
     "test": "pnpm --filter @trail/contracts build && vitest run",
     "test:watch": "vitest",
     "typecheck": "pnpm --filter @trail/contracts build && pnpm -r typecheck",
@@ -16,7 +16,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
-    "concurrently": "^9.2.1",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }
