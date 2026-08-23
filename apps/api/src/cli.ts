@@ -4,6 +4,7 @@ import { config } from "./config.js";
 import { TrailDatabase } from "./database.js";
 import { loadCorpus } from "./corpus.js";
 import { previewTranscriptFile } from "./adapters.js";
+import { ingestClaudeMemContext } from "./claude-mem.js";
 import { indexLocalSources } from "./source-index.js";
 import { runBenchmark } from "./benchmark.js";
 import { HarnessService } from "./harness.js";
@@ -27,6 +28,12 @@ const option = (name: string) => {
 try {
   if (command === "ingest" && args[0] === "--scan") {
     console.log(JSON.stringify(indexLocalSources(db), null, 2));
+  } else if (command === "ingest" && args[0] === "--claude-mem") {
+    const project = option("--project") ?? process.env.TRAIL_CLAUDE_MEM_PROJECT;
+    if (!project) throw new Error("Usage: trail ingest --claude-mem --project CLAUDE_MEM_PROJECT");
+    const result = await ingestClaudeMemContext(project);
+    if (result.preview) db.saveIngestion(result.preview);
+    console.log(JSON.stringify({ ...result, preview: result.preview }, null, 2));
   } else if (command === "ingest" && args[0]) {
     const preview = previewTranscriptFile(resolve(args[0]));
     db.saveIngestion(preview);
@@ -57,7 +64,9 @@ try {
   } else if (command === "doctor") {
     let github = false;
     try { execFileSync("gh", ["auth", "status"], { stdio: "ignore" }); github = true; } catch { /* reported below */ }
-    console.log(JSON.stringify({ apiConfiguration: preflight(), corpus: db.getTrails().length, database: true, github, mcpCommand: "node apps/mcp/dist/index.js" }, null, 2));
+    const claudeMemProject = process.env.TRAIL_CLAUDE_MEM_PROJECT;
+    const claudeMem = claudeMemProject ? await ingestClaudeMemContext(claudeMemProject) : { status: "not_configured" as const, reason: "Set TRAIL_CLAUDE_MEM_PROJECT to inspect a local Claude Mem project." };
+    console.log(JSON.stringify({ apiConfiguration: preflight(), corpus: db.getTrails().length, database: true, github, claudeMem, mcpCommand: "node apps/mcp/dist/index.js" }, null, 2));
   } else if (command === "verify-pr") {
     const repo = option("--repo");
     const sha = option("--sha");
@@ -70,7 +79,7 @@ try {
     }
     console.log(JSON.stringify(publishVerificationStatus({ repo, sha, state, description: option("--description") ?? `TRAIL verification ${state}` }), null, 2));
   } else {
-    console.log("TRAIL CLI\n  trail context --task \"...\" [--workspace PATH]\n  trail recover --bundle ID --failure \"...\"\n  trail verify --bundle ID [--workspace PATH]\n  trail doctor\n  trail ingest --scan\n  trail ingest <transcript.jsonl>\n  trail benchmark\n  trail run\n  trail verify-pr --repo owner/name --sha COMMIT --state pending|success|failure [--bundle ID]");
+    console.log("TRAIL CLI\n  trail context --task \"...\" [--workspace PATH]\n  trail recover --bundle ID --failure \"...\"\n  trail verify --bundle ID [--workspace PATH]\n  trail doctor\n  trail ingest --scan\n  trail ingest --claude-mem --project PROJECT\n  trail ingest <transcript.jsonl>\n  trail benchmark\n  trail run\n  trail verify-pr --repo owner/name --sha COMMIT --state pending|success|failure [--bundle ID]");
   }
 } finally {
   db.close();

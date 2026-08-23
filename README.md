@@ -116,6 +116,11 @@ pnpm trail ingest --scan
 # Preview a locally redacted transcript.
 pnpm trail ingest ~/.codex/sessions/.../rollout.jsonl
 
+# Pull a local Claude Mem context snapshot into the same redacted review queue.
+# This reads only the local loopback worker. It is never routed to an agent or
+# uploaded until a human reviews and approves an extracted workflow.
+pnpm trail ingest --claude-mem --project my-local-project
+
 # CLI artifacts, not a product dashboard.
 pnpm trail benchmark
 pnpm trail context --task "Fix the visible deployment. Do not edit a copied checkout."
