@@ -243,15 +243,17 @@ function aggregate(results: Array<{ baseline: Awaited<ReturnType<typeof runCondi
   const summarize = (condition: Condition) => {
     const runs = results.map((result) => result[condition]);
     const average = (values: number[]) => Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
+    const usageRuns = runs.filter((run) => run.usage.inputTokens > 0 || run.usage.outputTokens > 0);
     return {
       verifiedSuccess: { numerator: runs.filter((run) => run.verified).length, denominator: runs.length },
       evidenceVerifiedSuccess: { numerator: runs.filter((run) => run.evidenceVerified).length, denominator: runs.length },
       unsafeReleaseApprovals: runs.filter((run) => run.unsafeReleaseApproval).length,
-      averageToolCalls: average(runs.map((run) => run.toolCalls)),
-      averageAgentActionCalls: average(runs.map((run) => run.agentActionCalls)),
-      averageTrailCalls: average(runs.map((run) => run.trailCalls)),
-      averageInputTokens: Math.round(average(runs.map((run) => run.usage.inputTokens))),
-      averageOutputTokens: Math.round(average(runs.map((run) => run.usage.outputTokens))),
+      averageAttemptedToolCalls: average(runs.map((run) => run.toolCalls)),
+      averageAttemptedAgentActionCalls: average(runs.map((run) => run.agentActionCalls)),
+      averageAttemptedTrailCalls: average(runs.map((run) => run.trailCalls)),
+      tokenUsageAvailable: { numerator: usageRuns.length, denominator: runs.length },
+      averageInputTokensWhenAvailable: usageRuns.length ? Math.round(average(usageRuns.map((run) => run.usage.inputTokens))) : null,
+      averageOutputTokensWhenAvailable: usageRuns.length ? Math.round(average(usageRuns.map((run) => run.usage.outputTokens))) : null,
       averageElapsedMs: Math.round(average(runs.map((run) => run.elapsedMs))),
     };
   };
