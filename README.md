@@ -57,7 +57,7 @@ pnpm trail eval --repetitions 3
 # Run the same controlled fixtures through real Codex CLI sessions.
 # Baseline has no TRAIL server; guided must complete a stdio MCP context call.
 pnpm --filter @trail/mcp build
-pnpm trail eval-codex --repetitions 1 --api-base http://127.0.0.1:4317
+pnpm trail eval-codex --repetitions 1 --api-base http://127.0.0.1:4317 --model gpt-5.6-terra
 
 # Publish a real status for an exact commit after configuring a remote.
 pnpm trail verify-pr \

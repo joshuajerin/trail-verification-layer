@@ -7,7 +7,7 @@ import type { FixtureManifest } from "./sandbox.js";
 import { domainIds, type DomainId } from "./domain-evals.js";
 
 export const CODEX_TOOL_BUDGET = 6;
-export const CODEX_EVAL_MODEL = "gpt-5.6-luna";
+export const DEFAULT_CODEX_EVAL_MODEL = "gpt-5.6-luna";
 export const CODEX_REASONING_EFFORT = "medium";
 
 type Condition = "baseline" | "guided";
@@ -199,11 +199,11 @@ async function scoreWorkspace(workspace: string, manifest: FixtureManifest, pars
   };
 }
 
-async function runCondition(input: { domain: DomainId; manifest: FixtureManifest; condition: Condition; workspace: string; transcriptPath: string; apiBase: string }) {
+async function runCondition(input: { domain: DomainId; manifest: FixtureManifest; condition: Condition; workspace: string; transcriptPath: string; apiBase: string; model: string }) {
   const prompt = input.condition === "guided" ? treatmentPrompt(input.domain, input.manifest, input.workspace) : sharedPrompt(input.manifest);
   const args = [
     "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--json", "-s", "workspace-write",
-    "-c", 'approval_policy="never"', "-m", CODEX_EVAL_MODEL, "-c", `model_reasoning_effort=\"${CODEX_REASONING_EFFORT}\"`,
+    "-c", 'approval_policy="never"', "-m", input.model, "-c", `model_reasoning_effort=\"${CODEX_REASONING_EFFORT}\"`,
   ];
   if (input.condition === "guided") {
     args.push(
@@ -221,7 +221,7 @@ async function runCondition(input: { domain: DomainId; manifest: FixtureManifest
     condition: input.condition,
     promptTreatment: input.condition === "guided" ? "original task plus TRAIL MCP context" : "original task only",
     threadId: parsed.threadId,
-    model: CODEX_EVAL_MODEL,
+    model: input.model,
     reasoningEffort: CODEX_REASONING_EFFORT,
     agentActionBudget: CODEX_TOOL_BUDGET,
     toolCalls: parsed.toolCalls,
@@ -267,8 +267,9 @@ function aggregate(results: Array<{ baseline: Awaited<ReturnType<typeof runCondi
   };
 }
 
-export async function runCodexCliEvals(repetitions = 1, apiBase = process.env.TRAIL_API_BASE ?? "http://127.0.0.1:4317") {
+export async function runCodexCliEvals(repetitions = 1, apiBase = process.env.TRAIL_API_BASE ?? "http://127.0.0.1:4317", model = process.env.CODEX_EVAL_MODEL ?? DEFAULT_CODEX_EVAL_MODEL) {
   if (!Number.isInteger(repetitions) || repetitions < 1 || repetitions > 3) throw new Error("repetitions must be an integer from 1 to 3");
+  if (!model.trim()) throw new Error("model must be a non-empty Codex model identifier");
   if (!existsSync(join(projectRoot, "apps/mcp/dist/index.js"))) throw new Error("Build @trail/mcp before running Codex CLI evals.");
   const health = await fetch(`${apiBase}/api/health`);
   if (!health.ok) throw new Error(`TRAIL API preflight failed at ${apiBase}.`);
@@ -291,7 +292,7 @@ export async function runCodexCliEvals(repetitions = 1, apiBase = process.env.TR
       const conditions = new Map<Condition, Awaited<ReturnType<typeof runCondition>>>();
       for (const condition of order) {
         const workspace = condition === "baseline" ? baselineWorkspace : guidedWorkspace;
-        conditions.set(condition, await runCondition({ domain, manifest, condition, workspace, transcriptPath: join(pairRoot, `${condition}.jsonl`), apiBase }));
+        conditions.set(condition, await runCondition({ domain, manifest, condition, workspace, transcriptPath: join(pairRoot, `${condition}.jsonl`), apiBase, model }));
       }
       pairs.push({ domain, repetition, order, task: manifest.task, startingCommit, baseline: conditions.get("baseline")!, guided: conditions.get("guided")! });
     }
@@ -304,7 +305,7 @@ export async function runCodexCliEvals(repetitions = 1, apiBase = process.env.TR
     disclaimer: "Measured on purpose-built fixtures with a small sample. These are raw controlled results, not statistical significance or broad model performance.",
     evalId,
     apiBase,
-    model: CODEX_EVAL_MODEL,
+    model,
     reasoningEffort: CODEX_REASONING_EFFORT,
     agentActionBudget: CODEX_TOOL_BUDGET,
     startedAt,

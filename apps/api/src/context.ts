@@ -120,6 +120,10 @@ ${list([...required, ...criteria], "Follow the current user request exactly; no 
 DO NOT
 ${list(negative, "Do not invent completion evidence or expand the requested scope.")}
 
+LOCAL CONTRACT PRECEDENCE
+Historical trails describe process, not repository-specific literals. Derive provider or vendor identities, paths, commands, adapter names, and exact values only from the current request and the inspected repository contract. Never import those literals from historical context or guess a vendor-specific substitute.
+When the request omits an exact literal, inspect the smallest authoritative repository file or human-owned named check before the first edit. Do not guess first and inspect only after failure. Combine compatible read-only inspections and final checks when safe so the bounded route preserves its action budget.
+
 ROUTE
 ${list(route, "No applicable historical route. Continue with a bounded baseline route.")}
 
@@ -159,7 +163,19 @@ export async function compileContext(db: TrailDatabase, request: ContextCompileR
   const rankedMatches = matches;
   matches = rankedMatches.filter((match) => match.matchReasons.some((reason) => reason === "intent and failure language overlap" || /^(?:client|workspace|repository|branch|host) matches /.test(reason)));
   const bestScore = matches[0]?.score ?? 0;
-  const admitted = matches.filter((match, index) => index === 0 || match.score >= bestScore - 0.08);
+  const primaryIdentityFields = new Set(matches[0]?.matchReasons.flatMap((reason) => {
+    const field = reason.match(/^(client|workspace|repository|branch|host) matches /)?.[1];
+    return field ? [field] : [];
+  }) ?? []);
+  const admitted = matches.filter((match, index) => {
+    if (index === 0) return true;
+    if (match.score < bestScore - 0.08) return false;
+    if (primaryIdentityFields.size === 0) return true;
+    return match.matchReasons.some((reason) => {
+      const field = reason.match(/^(client|workspace|repository|branch|host) matches /)?.[1];
+      return field ? primaryIdentityFields.has(field) : false;
+    });
+  });
   const finalRejected = [
     ...retrieved.rejected,
     ...rankedMatches.filter((match) => !matches.includes(match)).map((match) => ({ ...match, rejectedReasons: ["no exact intent or identity match"] })),

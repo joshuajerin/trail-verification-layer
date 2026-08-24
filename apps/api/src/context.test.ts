@@ -30,8 +30,18 @@ describe("external human context compiler", () => {
     expect(negative?.source.sourceQuote).toBe("Do not edit a copied checkout");
     expect(task).toContain(negative!.source.sourceQuote);
     expect(result.bundle.compiledPrompt).toContain("CURRENT USER REQUEST — HIGHEST PRIORITY");
+    expect(result.bundle.compiledPrompt).toContain("LOCAL CONTRACT PRECEDENCE");
+    expect(result.bundle.compiledPrompt).toContain("Never import those literals from historical context or guess a vendor-specific substitute.");
+    expect(result.bundle.compiledPrompt).toContain("Do not guess first and inspect only after failure.");
     expect(result.bundle.compiledPrompt).toContain("ENVIRONMENT");
     expect(result.bundle.compiledPrompt).toContain("Do not edit a copied checkout");
+  });
+
+  it("keeps secondary routes on the primary exact identity surface", async () => {
+    const task = "Repair the robot sensor configuration, prove the firmware still builds, and do not release until readings are observed from the attached device.";
+    const result = await compileContext(db, { task, environment: { client: "serial-monitor", workspace: "firmware-device", authSurface: "none" }, trigger: "release", evidenceState: {} });
+    expect(result.bundle.matchedTrails[0]?.id).toBe("trail-hardware-runtime-proof");
+    expect(result.bundle.matchedTrails.map((trail) => trail.id)).not.toContain("trail-provider-completeness");
   });
 
   it("does not force a route when nothing applies", async () => {
