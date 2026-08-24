@@ -9,6 +9,8 @@ const tools = [
   {
     name: "trail_build_context",
     description: "Build a source-backed execution brief from the current request and approved human context.",
+    annotations: { readOnlyHint: true, idempotentHint: false },
+    execution: { taskSupport: "forbidden" },
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -26,6 +28,8 @@ const tools = [
   {
     name: "trail_recover",
     description: "Request the single bounded recovery route after an observed failure.",
+    annotations: { readOnlyHint: false, idempotentHint: false },
+    execution: { taskSupport: "forbidden" },
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -40,6 +44,8 @@ const tools = [
   {
     name: "trail_verify",
     description: "Run human-approved evidence adapters. Agent prose cannot satisfy this release gate.",
+    annotations: { readOnlyHint: false, idempotentHint: false },
+    execution: { taskSupport: "forbidden" },
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -54,6 +60,8 @@ const tools = [
   {
     name: "trail_run_domain_evals",
     description: "Run real paired TRAIL evaluations for robotics, SaaS, and AI/ML through the configured live provider. Results are based on independent evidence gates, never agent prose.",
+    annotations: { readOnlyHint: false, idempotentHint: false },
+    execution: { taskSupport: "forbidden" },
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -72,7 +80,10 @@ async function request(path: string, body: unknown) {
 }
 
 async function callTool(name: string, args: Record<string, unknown>) {
-  if (name === "trail_build_context") return request("/api/context/compile", args);
+  if (name === "trail_build_context") {
+    const response = await request("/api/context/compile", args);
+    return { bundle: response.bundle, provider: response.provider };
+  }
   if (name === "trail_recover") {
     const { bundleId, ...body } = args;
     return request(`/api/context/${String(bundleId)}/recover`, body);
@@ -92,7 +103,7 @@ async function handle(message: RpcRequest) {
   const id = message.id ?? null;
   try {
     if (message.method === "initialize") {
-      send({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "trail", version: "0.1.0" } } });
+      send({ jsonrpc: "2.0", id, result: { protocolVersion: "2025-06-18", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "trail", version: "0.1.0" }, instructions: "Use trail_build_context at task start. Current user instructions always outrank retrieved trails." } });
     } else if (message.method === "tools/list") {
       send({ jsonrpc: "2.0", id, result: { tools } });
     } else if (message.method === "tools/call") {
