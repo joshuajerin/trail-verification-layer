@@ -96,7 +96,7 @@ Codex MCP configuration:
 
 The MCP server exposes `trail_build_context`, `trail_recover`, `trail_verify`, and `trail_run_domain_evals`. The last tool runs the same real K3/OpenAI-compatible harness as `trail eval`; it returns observed gate results for robotics, SaaS, and AI/ML.
 
-`trail eval-codex` is the agent-harness A/B. It launches isolated, ephemeral Codex CLI sessions with the same model, reasoning effort, six repository-action calls, task text, and starting commit. Only the guided condition receives the TRAIL stdio MCP server and an instruction to call `trail_build_context`; TRAIL calls are measured and reported separately rather than pretending context retrieval is free. The evaluator reruns human-owned fixture checks, inspects the Git diff, requires the expected reviewed trail, and treats agent prose as no evidence. Raw JSONL transcripts and reports stay under gitignored `.trail/evals/`.
+`trail eval-codex` is the agent-harness A/B. It launches isolated, ephemeral Codex CLI sessions with the same model, reasoning effort, six repository-action calls, task text, and starting commit. Only the guided condition receives the TRAIL stdio MCP server and an instruction to call `trail_build_context`; TRAIL calls are measured and reported separately rather than pretending context retrieval is free. The evaluator reruns human-owned fixture checks, inspects the Git diff, requires the expected reviewed trail, and treats agent prose as no evidence. Attempted calls that trigger the hard limit remain visible, and token averages exclude budget-terminated streams that never emit Codex's final usage event. Raw JSONL transcripts and reports stay under gitignored `.trail/evals/`.
 
 ## Quarantined research corpus
 
