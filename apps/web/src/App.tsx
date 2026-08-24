@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { IngestionPreview, RetrievalPolicy, RunEvent, RunMetrics, Trail } from "@trail/contracts";
 import { api, eventStream } from "./api";
+import { ContextView } from "./ContextView";
 
-type Tab = "proof" | "corpus" | "ingest" | "policy";
+type Tab = "context" | "proof" | "corpus" | "ingest" | "policy";
 type Health = {
   status: string;
   corpusCount: number;
@@ -64,8 +65,9 @@ type Benchmark = {
 };
 
 const navigation: Array<{ id: Tab; label: string }> = [
+  { id: "context", label: "Build context" },
   { id: "proof", label: "Live proof" },
-  { id: "corpus", label: "Trail corpus" },
+  { id: "corpus", label: "Skill library" },
   { id: "ingest", label: "Data intake" },
   { id: "policy", label: "RSI policy" },
 ];
@@ -88,7 +90,7 @@ function AppShell({ tab, setTab, health, children }: { tab: Tab; setTab: (tab: T
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="brand" aria-label="TRAIL live proof" onClick={() => setTab("proof")}><Mark /><span>TRAIL</span><small>Trajectory Retrieval & Intent Alignment Layer</small></button>
+        <button className="brand" aria-label="TRAIL skill library" onClick={() => setTab("corpus")}><Mark /><span>TRAIL</span><small>Trajectory Retrieval & Intent Alignment Layer</small></button>
         <nav aria-label="Primary navigation">
           {navigation.map((item) => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.label}</button>)}
         </nav>
@@ -223,24 +225,281 @@ function ProofView({ health }: { health: Health | null }) {
   );
 }
 
-function CorpusView({ trails }: { trails: Trail[] }) {
-  const [query, setQuery] = useState("");
-  const visible = useMemo(() => trails.filter((trail) => [trail.title, trail.summary, trail.taskFamily, ...trail.tags].join(" ").toLowerCase().includes(query.toLowerCase())), [trails, query]);
-  const families = new Set(trails.map((trail) => trail.taskFamily)).size;
+type SkillDefinition = {
+  id: string;
+  name: string;
+  description: string;
+  families: string[];
+};
+type SkillIngestion = {
+  id: string;
+  status: "scanning" | "completed" | "failed";
+  rootPath: string;
+  expectedTotal: number | null;
+  discovered: number;
+  indexed: number;
+  skipped: number;
+  errors: number;
+  bytes: number;
+  skillCount: number;
+  subskillCount: number;
+  ratePerSecond: number;
+  currentPath: string;
+  recent: Array<{ sourceName: string; skill: string; subskill: string; indexedAt: string }>;
+  startedAt: string;
+  completedAt: string | null;
+  error: string | null;
+};
+
+const skillDefinitions: SkillDefinition[] = [
+  {
+    id: "orient",
+    name: "Orient",
+    description: "Resolve where the work belongs before the agent takes action.",
+    families: ["environment-routing", "client-surface", "deployment-auth", "provider-readiness", "dependency-integrity"],
+  },
+  {
+    id: "execute",
+    name: "Execute",
+    description: "Carry intent forward without expanding authority or losing constraints.",
+    families: ["scope-contract", "failure-recovery", "artifact-integrity", "harness-safety"],
+  },
+  {
+    id: "prove",
+    name: "Prove",
+    description: "Verify the outcome at the real acceptance surface before release.",
+    families: ["release-verification", "runtime-proof", "runtime-diagnosis", "hardware-proof"],
+  },
+];
+const initialSkill = skillDefinitions[0]!;
+const initialSubskill = initialSkill.families[0]!;
+
+function displayName(value: string) {
+  return value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+const numberFormatter = new Intl.NumberFormat("en-US");
+
+function formatBytes(value: number) {
+  if (value < 1_024) return `${value} B`;
+  if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KB`;
+  if (value < 1_073_741_824) return `${(value / 1_048_576).toFixed(1)} MB`;
+  return `${(value / 1_073_741_824).toFixed(1)} GB`;
+}
+
+function connectIngestionStream(id: string, onJob: (job: SkillIngestion) => void, onError: (message: string) => void) {
+  const stream = eventStream(`/api/skill-ingestions/${id}/events`);
+  stream.onmessage = (message) => onJob(JSON.parse(message.data) as SkillIngestion);
+  stream.addEventListener("complete", (message) => {
+    onJob(JSON.parse((message as MessageEvent).data) as SkillIngestion);
+    stream.close();
+  });
+  stream.onerror = () => {
+    if (stream.readyState === EventSource.CLOSED) onError("The live stream closed before ingestion completed.");
+  };
+  return stream;
+}
+
+function LiveIngestionPanel() {
+  const [rootPath, setRootPath] = useState("");
+  const [expectedTotal, setExpectedTotal] = useState("318000");
+  const [job, setJob] = useState<SkillIngestion | null>(null);
+  const [error, setError] = useState("");
+  const streamRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void api<{ job: SkillIngestion | null }>("/api/skill-ingestions/latest").then((result) => {
+      if (!active || !result.job) return;
+      setJob(result.job);
+      if (result.job.status === "scanning") {
+        streamRef.current = connectIngestionStream(result.job.id, setJob, setError);
+      }
+    }).catch(() => undefined);
+    return () => { active = false; streamRef.current?.close(); };
+  }, []);
+
+  const start = async () => {
+    setError("");
+    streamRef.current?.close();
+    try {
+      const total = Number.parseInt(expectedTotal.replaceAll(",", ""), 10);
+      const body = { rootPath: rootPath.trim(), ...(Number.isFinite(total) && total > 0 ? { expectedTotal: total } : {}) };
+      const result = await api<{ job: SkillIngestion }>("/api/skill-ingestions", { method: "POST", body: JSON.stringify(body) });
+      setJob(result.job);
+      streamRef.current = connectIngestionStream(result.job.id, setJob, setError);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to start ingestion.");
+    }
+  };
+
+  const running = job?.status === "scanning";
+  const expected = job?.expectedTotal ?? null;
+  const progress = job ? job.status === "completed" ? 100 : expected ? Math.min(99.5, job.discovered / expected * 100) : 0 : 0;
+
   return (
-    <div className="view content-view">
-      <div className="page-heading"><div><p className="eyebrow">APPROVED, REDACTED, VERSIONED</p><h1>Trail corpus</h1><p>Not forum posts. Each entry is a route with applicability rules, hard evidence, invalidators, and provenance.</p></div><div className="heading-stats"><strong>{trails.length}</strong><span>reviewed trails</span><strong>{families}</strong><span>failure families</span></div></div>
-      <label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search intent, failure signature, or evidence…" /></label>
-      <div className="corpus-grid">
-        {visible.map((trail) => (
-          <article className="trail-card" key={trail.id}>
-            <div><span>{trail.taskFamily}</span><b>{Math.round(trail.confidence * 100)}% confidence</b></div>
-            <h2>{trail.title}</h2><p>{trail.summary}</p>
-            <ul>{trail.steps.slice(0, 2).flatMap((step) => step.evidence.slice(0, 1)).map((evidence) => <li key={evidence.id}>{evidence.description}</li>)}</ul>
-            <footer><span>{trail.provenance.provider}</span><span>{trail.triggers.join(" · ")}</span></footer>
-          </article>
-        ))}
+    <section className={`live-ingestion ${running ? "is-running" : ""}`} aria-label="Live SKILL.md ingestion">
+      <div className="ingestion-intro">
+        <div className="ingestion-title"><span className="live-dot" aria-hidden="true" /><div><small>LIVE DATA INGESTION</small><h2>Index a skill corpus as it arrives.</h2></div></div>
+        <p>Point TRAIL at any local folder. It discovers nested <code>SKILL.md</code> files, extracts hierarchy metadata, and writes in batches without loading the corpus into the browser.</p>
+        <div className="ingestion-form">
+          <label><span>Corpus folder</span><input value={rootPath} onChange={(event) => setRootPath(event.target.value)} placeholder="C:\\data\\skill-library" disabled={running} /></label>
+          <label className="expected-field"><span>Expected files</span><input inputMode="numeric" value={expectedTotal} onChange={(event) => setExpectedTotal(event.target.value.replace(/[^\d,]/g, ""))} placeholder="Optional" disabled={running} /></label>
+          <button onClick={() => void start()} disabled={running || !rootPath.trim()}>{running ? "Ingesting…" : "Start ingestion"}<span aria-hidden="true">→</span></button>
+        </div>
+        <div className="ingestion-safety"><span>LOCAL</span><p>Metadata only. Handles the 318K target corpus and the pinned 138,133-row SkillMD source without an OpenAI key or model call.</p></div>
       </div>
+
+      <div className="ingestion-monitor" aria-live="polite">
+        <header><div><span className={`monitor-state state-${job?.status ?? "idle"}`}>{job?.status ?? "Ready"}</span><strong>{job ? `${numberFormatter.format(job.indexed)} indexed` : "Waiting for a corpus"}</strong></div>{job && <small>{numberFormatter.format(job.ratePerSecond)} files/sec</small>}</header>
+        <div className={`ingestion-progress ${expected ? "determinate" : "indeterminate"}`}><i style={{ width: expected || job?.status === "completed" ? `${progress}%` : undefined }} /></div>
+        <p className="current-ingestion-path" title={job?.currentPath}>{job?.currentPath ?? "Choose a folder to begin a live scan."}</p>
+        <dl className="ingestion-metrics">
+          <div><dt>{job ? numberFormatter.format(job.discovered) : "—"}</dt><dd>discovered</dd></div>
+          <div><dt>{job ? numberFormatter.format(job.skillCount) : "—"}</dt><dd>skills</dd></div>
+          <div><dt>{job ? numberFormatter.format(job.subskillCount) : "—"}</dt><dd>subskills</dd></div>
+          <div><dt>{job ? formatBytes(job.bytes) : "—"}</dt><dd>source size</dd></div>
+        </dl>
+        <div className="ingestion-activity">
+          <div><span>RECENT ACTIVITY</span>{job && <small>{job.errors ? `${job.errors} errors` : "No errors"}</small>}</div>
+          {job?.recent.length ? <ol>{job.recent.slice(0, 6).map((item) => <li key={`${item.sourceName}-${item.indexedAt}`}><i /><div><strong>{item.skill}</strong><span>{item.subskill} · {item.sourceName}</span></div></li>)}</ol> : <p>Newly indexed skills will appear here.</p>}
+        </div>
+        {error && <p className="ingestion-error">{error}</p>}
+        {job?.error && <p className="ingestion-error">{job.error}</p>}
+      </div>
+    </section>
+  );
+}
+
+function SkillLibraryView({ trails }: { trails: Trail[] }) {
+  const [query, setQuery] = useState("");
+  const [selectedSkillId, setSelectedSkillId] = useState(initialSkill.id);
+  const [selectedSubskill, setSelectedSubskill] = useState(initialSubskill);
+  const [selectedTrailId, setSelectedTrailId] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+
+  const visible = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return trails;
+    return trails.filter((trail) => [trail.title, trail.summary, trail.intent, trail.taskFamily, ...trail.tags].join(" ").toLowerCase().includes(normalized));
+  }, [trails, query]);
+
+  const skills = useMemo(() => {
+    const known = new Set(skillDefinitions.flatMap((skill) => skill.families));
+    const otherFamilies = [...new Set(trails.map((trail) => trail.taskFamily).filter((family) => !known.has(family)))].sort();
+    return otherFamilies.length ? [...skillDefinitions, { id: "specialized", name: "Specialized", description: "Domain-specific operational knowledge that does not fit a shared execution layer.", families: otherFamilies }] : skillDefinitions;
+  }, [trails]);
+
+  const selectedSkill = skills.find((skill) => skill.id === selectedSkillId) ?? skills[0] ?? initialSkill;
+  const activeTrails = useMemo(() => visible.filter((trail) => trail.taskFamily === selectedSubskill), [visible, selectedSubskill]);
+  const selectedTrail = activeTrails.find((trail) => trail.id === selectedTrailId) ?? activeTrails[0];
+  const subskillCount = new Set(trails.map((trail) => trail.taskFamily)).size;
+  const evidence = selectedTrail?.steps.flatMap((step) => step.evidence) ?? [];
+
+  const chooseSkill = (skill: SkillDefinition) => {
+    setSelectedSkillId(skill.id);
+    const firstPopulated = skill.families.find((family) => trails.some((trail) => trail.taskFamily === family));
+    setSelectedSubskill(firstPopulated ?? skill.families[0] ?? initialSubskill);
+    setSelectedTrailId("");
+  };
+
+  const chooseSubskill = (skillId: string, family: string) => {
+    setSelectedSkillId(skillId);
+    setSelectedSubskill(family);
+    setSelectedTrailId("");
+  };
+
+  const choosePlaceholder = (skillId: string, family: string, trailId: string) => {
+    setSelectedSkillId(skillId);
+    setSelectedSubskill(family);
+    setSelectedTrailId(trailId);
+  };
+
+  return (
+    <div className="view skill-library-view">
+      <header className="skill-library-heading">
+        <div><p className="eyebrow">ROUTER-READY OPERATIONAL KNOWLEDGE</p><h1>Operational skills and subskills.</h1><p>TRAIL organizes reviewed agent experience into a hierarchy the router can navigate: execution skills, focused subskills, and the evidence-backed layers beneath each one.</p></div>
+        <dl><div><dt>{skills.length}</dt><dd>skill groups</dd></div><div><dt>{subskillCount}</dt><dd>subskills</dd></div><div><dt>{trails.length}</dt><dd>skill placeholders</dd></div><div><dt>318K</dt><dd>source target</dd></div></dl>
+      </header>
+
+      <label className="skill-search"><span aria-hidden="true">⌕</span><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search skills, subskills, intent, or evidence" /><kbd>/</kbd></label>
+
+      <section className="taxonomy-board" aria-label="Skill hierarchy">
+        <header className="taxonomy-heading"><div><span>SKILL TREE</span><strong>{trails.length} routed skill placeholders</strong></div><small>Group → subskill → SKILL.md leaf</small></header>
+        <div className="root-node"><span>Knowledge domain</span><strong>Agent execution</strong><small>318K SKILL.md source target · {trails.length} routed placeholders</small></div>
+        <div className="root-connector" aria-hidden="true" />
+        <div className="skill-node-grid">
+          {skills.map((skill) => {
+            const count = visible.filter((trail) => skill.families.includes(trail.taskFamily)).length;
+            return (
+              <article className={`skill-node ${skill.id === selectedSkill.id ? "selected" : ""}`} key={skill.id}>
+                <button className="skill-node-heading" onClick={() => chooseSkill(skill)}><span>{String(skills.indexOf(skill) + 1).padStart(2, "0")}</span><div><strong>{skill.name}</strong><small>{count} trails</small></div></button>
+                <p>{skill.description}</p>
+                <div className="subskill-node-list">
+                  {skill.families.map((family) => {
+                    const familyTrails = visible.filter((trail) => trail.taskFamily === family);
+                    return <div className={`subskill-branch ${family === selectedSubskill ? "active" : ""}`} key={family}>
+                      <button className="subskill-node" onClick={() => chooseSubskill(skill.id, family)}><span>{displayName(family)}</span><b>{familyTrails.length}</b></button>
+                      <div className="placeholder-node-list">
+                        {familyTrails.map((trail) => <button className={trail.id === selectedTrail?.id ? "active" : ""} key={trail.id} title={trail.title} onClick={() => choosePlaceholder(skill.id, family, trail.id)}><i /><span>{trail.title}</span></button>)}
+                      </div>
+                    </div>;
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <LiveIngestionPanel />
+
+      <section className="library-workspace">
+        <aside className="subskill-index">
+          <div><span>Selected skill</span><h2>{selectedSkill.name}</h2><p>{selectedSkill.description}</p></div>
+          <nav aria-label={`${selectedSkill.name} subskills`}>
+            {selectedSkill.families.map((family) => {
+              const familyTrails = visible.filter((trail) => trail.taskFamily === family);
+              return <button className={family === selectedSubskill ? "active" : ""} key={family} onClick={() => chooseSubskill(selectedSkill.id, family)}><span>{displayName(family)}</span><b>{familyTrails.length}</b><small>{familyTrails[0]?.summary ?? "No matching trail"}</small></button>;
+            })}
+          </nav>
+        </aside>
+
+        <div className="skill-inspector">
+          <header className="inspector-heading">
+            <div><p><span>Agent execution</span><i>/</i><span>{selectedSkill.name}</span><i>/</i><strong>{displayName(selectedSubskill)}</strong></p><h2>{displayName(selectedSubskill)}</h2><small>{activeTrails.length} operational trail{activeTrails.length === 1 ? "" : "s"} available to the router</small></div>
+            <span className="router-state"><i /> Router-ready</span>
+          </header>
+
+          {activeTrails.length ? <>
+            <div className="trail-selector" role="tablist" aria-label="Trails in selected subskill">
+              {activeTrails.map((trail) => <button role="tab" aria-selected={trail.id === selectedTrail?.id} className={trail.id === selectedTrail?.id ? "active" : ""} key={trail.id} onClick={() => setSelectedTrailId(trail.id)}><span>{trail.title}</span><small>{Math.round(trail.confidence * 100)}%</small></button>)}
+            </div>
+
+            {selectedTrail && <div className="layer-stack">
+              <header><div><span>{selectedTrail.id}</span><h3>{selectedTrail.title}</h3><p>{selectedTrail.summary}</p></div><div><small>Reviewed trail</small><strong>{selectedTrail.reviewStatus}</strong></div></header>
+              <div className="layer-grid">
+                <article className="knowledge-layer intent-layer"><span>Layer 01</span><h4>Intent</h4><p>{selectedTrail.intent}</p><ul>{selectedTrail.preconditions.map((item) => <li key={item}>{item}</li>)}</ul></article>
+                <article className="knowledge-layer constraint-layer"><span>Layer 02</span><h4>Boundaries</h4><ul>{selectedTrail.negativeConstraints.map((item) => <li key={item}>{item}</li>)}{selectedTrail.invalidators.map((item) => <li className="invalidator" key={item}>{item}</li>)}</ul></article>
+                <article className="knowledge-layer route-layer"><span>Layer 03</span><h4>Route</h4><ol>{selectedTrail.steps.map((step, index) => <li key={step.id}><b>{String(index + 1).padStart(2, "0")}</b><div><strong>{step.action}</strong><small>{step.tool} · on failure: {step.onFailure}</small></div></li>)}</ol></article>
+                <article className="knowledge-layer evidence-layer"><span>Layer 04</span><h4>Evidence</h4><ul>{evidence.map((item) => <li key={item.id}><strong>{item.description}</strong><code>{item.kind} = {item.expected}</code></li>)}</ul></article>
+              </div>
+              <footer className="provenance-bar"><div><span>Source</span><strong>{selectedTrail.provenance.provider}</strong></div><div><span>Range</span><strong>{selectedTrail.provenance.sourceRange}</strong></div><div><span>Triggers</span><strong>{selectedTrail.triggers.join(" · ")}</strong></div><div><span>Confidence</span><strong>{Math.round(selectedTrail.confidence * 100)}%</strong></div></footer>
+            </div>}
+          </> : <div className="skill-empty-state"><h3>No trails match this view</h3><p>Clear the search or choose another subskill.</p></div>}
+        </div>
+      </section>
     </div>
   );
 }
@@ -482,7 +741,7 @@ function WeightBars({ weights }: { weights: RetrievalPolicy["weights"] | undefin
 }
 
 export function App() {
-  const [tab, setTab] = useState<Tab>("proof");
+  const [tab, setTab] = useState<Tab>("corpus");
   const [health, setHealth] = useState<Health | null>(null);
   const [trails, setTrails] = useState<Trail[]>([]);
   const [policies, setPolicies] = useState<RetrievalPolicy[]>([]);
@@ -497,8 +756,9 @@ export function App() {
 
   return (
     <AppShell tab={tab} setTab={setTab} health={health}>
+      {tab === "context" && <ContextView health={health} />}
       {tab === "proof" && <ProofView health={health} />}
-      {tab === "corpus" && <CorpusView trails={trails} />}
+      {tab === "corpus" && <SkillLibraryView trails={trails} />}
       {tab === "ingest" && <IngestView health={health} onApproved={(trail) => setTrails((current) => [trail, ...current.filter((item) => item.id !== trail.id)])} />}
       {tab === "policy" && <PolicyView policies={policies} reload={load} />}
     </AppShell>

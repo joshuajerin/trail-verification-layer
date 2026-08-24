@@ -13,6 +13,7 @@ import { retrieveTrails } from "./retrieval.js";
 import { HarnessService } from "./harness.js";
 import { ensureActivePolicy, evaluatePolicy, proposePolicy } from "./policy.js";
 import { indexLocalSources } from "./source-index.js";
+import { SkillIngestionService } from "./skill-ingestion.js";
 import { runBenchmark } from "./benchmark.js";
 import { compileContext, recoverContext } from "./context.js";
 import { verifyContext } from "./verification.js";
@@ -23,6 +24,7 @@ export const db = new TrailDatabase(config.databasePath);
 const corpusCount = loadCorpus(db);
 ensureActivePolicy(db);
 const harness = new HarnessService(db);
+export const skillIngestions = new SkillIngestionService(db);
 
 export const app = Fastify({ logger: true, bodyLimit: 16 * 1024 * 1024 });
 await app.register(cors, { origin: [config.allowedOrigin, "http://localhost:4173"] });
@@ -69,6 +71,54 @@ app.post("/api/ingestions/sample", async () => {
   const preview = previewTranscript("sample-codex.jsonl", readFileSync(path, "utf8"));
   db.saveIngestion(preview);
   return preview;
+});
+
+app.get("/api/skill-ingestions/latest", async () => ({ job: skillIngestions.latest() }));
+
+app.get("/api/skill-ingestions/:id", async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const job = skillIngestions.get(id);
+  return job ? { job } : reply.code(404).send({ error: "Skill ingestion not found" });
+});
+
+app.post("/api/skill-ingestions", async (request, reply) => {
+  const body = (request.body ?? {}) as { rootPath?: string; expectedTotal?: number };
+  if (!body.rootPath?.trim()) return reply.code(400).send({ error: "rootPath is required" });
+  if (body.expectedTotal !== undefined && (!Number.isFinite(body.expectedTotal) || body.expectedTotal < 1 || body.expectedTotal > 10_000_000)) {
+    return reply.code(400).send({ error: "expectedTotal must be between 1 and 10,000,000" });
+  }
+  try {
+    const job = await skillIngestions.start(body.rootPath, body.expectedTotal);
+    return reply.code(202).send({ job });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to start SKILL.md ingestion.";
+    return reply.code(message.includes("already running") ? 409 : 400).send({ error: message });
+  }
+});
+
+app.get("/api/skill-ingestions/:id/events", async (request, reply) => {
+  const { id } = request.params as { id: string };
+  if (!skillIngestions.get(id)) return reply.code(404).send({ error: "Skill ingestion not found" });
+  reply.hijack();
+  reply.raw.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", "Access-Control-Allow-Origin": config.allowedOrigin });
+  let previous = "";
+  const emit = () => {
+    const job = skillIngestions.get(id);
+    if (!job) return;
+    const payload = JSON.stringify(job);
+    if (payload !== previous) {
+      reply.raw.write(`data: ${payload}\n\n`);
+      previous = payload;
+    }
+    if (job.status !== "scanning") {
+      reply.raw.write(`event: complete\ndata: ${payload}\n\n`);
+      clearInterval(interval);
+      reply.raw.end();
+    }
+  };
+  const interval = setInterval(emit, 150);
+  emit();
+  request.raw.on("close", () => clearInterval(interval));
 });
 
 app.post("/api/ingestions/preview", async (request, reply) => {

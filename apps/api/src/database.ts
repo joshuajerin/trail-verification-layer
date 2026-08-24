@@ -13,6 +13,15 @@ type RunRecord = {
   createdAt: string;
 };
 
+export type SourceRecord = {
+  pathHash: string;
+  provider: string;
+  sourceName: string;
+  sizeBytes: number;
+  modifiedAt: string;
+  signals: string[];
+};
+
 export class TrailDatabase {
   readonly db: DatabaseSync;
   private ftsAvailable = false;
@@ -56,6 +65,7 @@ export class TrailDatabase {
         signal_json TEXT NOT NULL,
         indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE INDEX IF NOT EXISTS sources_provider_modified_idx ON sources(provider, modified_at DESC);
       CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
         mode TEXT NOT NULL,
@@ -246,24 +256,39 @@ export class TrailDatabase {
     this.db.prepare("UPDATE ingestions SET status = 'approved' WHERE trail_id = ?").run(trailId);
   }
 
-  upsertSource(record: { pathHash: string; provider: string; sourceName: string; sizeBytes: number; modifiedAt: string; signals: string[] }) {
-    this.db
-      .prepare(`INSERT INTO sources (path_hash, provider, source_name, size_bytes, modified_at, signal_json)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(path_hash) DO UPDATE SET size_bytes=excluded.size_bytes, modified_at=excluded.modified_at, signal_json=excluded.signal_json`)
-      .run(record.pathHash, record.provider, record.sourceName, record.sizeBytes, record.modifiedAt, JSON.stringify(record.signals));
+  upsertSource(record: SourceRecord) {
+    this.upsertSources([record]);
+  }
+
+  upsertSources(records: SourceRecord[]) {
+    if (!records.length) return;
+    const statement = this.db.prepare(`INSERT INTO sources (path_hash, provider, source_name, size_bytes, modified_at, signal_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(path_hash) DO UPDATE SET provider=excluded.provider, source_name=excluded.source_name,
+      size_bytes=excluded.size_bytes, modified_at=excluded.modified_at, signal_json=excluded.signal_json`);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const record of records) {
+        statement.run(record.pathHash, record.provider, record.sourceName, record.sizeBytes, record.modifiedAt, JSON.stringify(record.signals));
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   sourceSummary() {
     const rows = this.db.prepare("SELECT provider, COUNT(*) AS count, SUM(size_bytes) AS bytes FROM sources GROUP BY provider").all() as Array<{ provider: string; count: number; bytes: number }>;
-    const signalRows = this.db.prepare("SELECT signal_json FROM sources").all() as Array<{ signal_json: string }>;
-    const signals: Record<string, number> = {};
-    for (const row of signalRows) for (const signal of JSON.parse(row.signal_json) as string[]) signals[signal] = (signals[signal] ?? 0) + 1;
+    const signalRows = this.db.prepare(`SELECT json_each.value AS signal, COUNT(*) AS count
+      FROM sources, json_each(sources.signal_json)
+      GROUP BY json_each.value`).all() as Array<{ signal: string; count: number }>;
+    const signals = Object.fromEntries(signalRows.map((row) => [row.signal, Number(row.count)]));
     return { providers: rows, total: rows.reduce((sum, row) => sum + Number(row.count), 0), signals };
   }
 
   sourceCandidates(limit = 50) {
-    const rows = this.db.prepare("SELECT path_hash, provider, source_name, size_bytes, modified_at, signal_json FROM sources").all() as Array<{
+    const rows = this.db.prepare("SELECT path_hash, provider, source_name, size_bytes, modified_at, signal_json FROM sources WHERE provider IN ('codex', 'claude')").all() as Array<{
       path_hash: string; provider: string; source_name: string; size_bytes: number; modified_at: string; signal_json: string;
     }>;
     return rows
