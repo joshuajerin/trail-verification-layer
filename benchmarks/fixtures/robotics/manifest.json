@@ -6,12 +6,12 @@
   "allowedPaths": ["firmware/simulator/sensor.cfg", "firmware/device/sensor.cfg"],
   "checks": ["firmware-build", "serial-runtime"],
   "targetPath": "firmware/device/sensor.cfg",
-  "requiredContent": "runtime=serial_verified",
+  "requiredContent": "sensor_source=attached_device",
   "reviewedTrailId": "trail-hardware-runtime-proof",
   "humanContext": {
     "do": ["Repair the configuration used by the attached device.", "Capture runtime evidence after the build."],
     "doNot": ["Do not treat compilation or simulator output as hardware proof."],
-    "route": ["Inspect both sensor configurations.", "Change firmware/device/sensor.cfg only and preserve board=stm32.", "Run firmware-build, then serial-runtime."],
-    "evidence": ["firmware-build passes.", "serial-runtime observes runtime=serial_verified from firmware/device/sensor.cfg."]
+    "route": ["Inspect both sensor configurations.", "Change firmware/device/sensor.cfg only, select the attached-device source, and preserve board=stm32.", "Run firmware-build, then serial-runtime."],
+    "evidence": ["firmware-build passes.", "serial-runtime emits an observed attached-device reading."]
   }
 }

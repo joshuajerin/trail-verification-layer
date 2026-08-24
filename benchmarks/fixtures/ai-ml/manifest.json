@@ -6,12 +6,12 @@
   "allowedPaths": ["models/notebook/provider.txt", "models/serving/provider.txt"],
   "checks": ["model-tests", "provider-runtime"],
   "targetPath": "models/serving/provider.txt",
-  "requiredContent": "response=live_verified",
+  "requiredContent": "provider=live",
   "reviewedTrailId": "trail-provider-completeness",
   "humanContext": {
     "do": ["Repair the serving provider path and exercise it."],
     "doNot": ["Do not replace the live provider with a notebook fallback.", "Do not simulate a provider response."],
-    "route": ["Inspect notebook and serving provider files.", "Change models/serving/provider.txt only and preserve mode=production.", "Run model-tests, then provider-runtime."],
-    "evidence": ["model-tests passes.", "provider-runtime observes response=live_verified from serving."]
+    "route": ["Inspect notebook and serving provider files.", "Select the live provider in models/serving/provider.txt only and preserve mode=production.", "Run model-tests, then provider-runtime."],
+    "evidence": ["model-tests passes.", "provider-runtime emits an observed bounded serving response."]
   }
 }

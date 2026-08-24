@@ -6,12 +6,12 @@
   "allowedPaths": ["apps/preview/access.txt", "apps/production/access.txt"],
   "checks": ["web-build", "production-http"],
   "targetPath": "apps/production/access.txt",
-  "requiredContent": "signup=public_verified",
+  "requiredContent": "authentication=none",
   "reviewedTrailId": "trail-public-access-proof",
   "humanContext": {
     "do": ["Change the production signup surface and verify it without a session."],
     "doNot": ["Do not make preview public.", "Do not use an authenticated browser as release evidence."],
-    "route": ["Inspect preview and production access files.", "Change apps/production/access.txt only and preserve surface=production.", "Run web-build, then production-http."],
-    "evidence": ["web-build passes.", "production-http observes signup=public_verified on production."]
+    "route": ["Inspect preview and production access files.", "Remove authentication from apps/production/access.txt only and preserve surface=production.", "Run web-build, then production-http."],
+    "evidence": ["web-build passes.", "production-http returns an anonymous 200 while preview remains authenticated."]
   }
 }

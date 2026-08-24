@@ -54,6 +54,11 @@ pnpm trail run
 # Each domain runs baseline and TRAIL-guided conditions from the same snapshot.
 pnpm trail eval --repetitions 3
 
+# Run the same controlled fixtures through real Codex CLI sessions.
+# Baseline has no TRAIL server; guided must complete a stdio MCP context call.
+pnpm --filter @trail/mcp build
+pnpm trail eval-codex --repetitions 1 --api-base http://127.0.0.1:4317
+
 # Publish a real status for an exact commit after configuring a remote.
 pnpm trail verify-pr \
   --repo owner/repository \
@@ -90,6 +95,8 @@ Codex MCP configuration:
 ```
 
 The MCP server exposes `trail_build_context`, `trail_recover`, `trail_verify`, and `trail_run_domain_evals`. The last tool runs the same real K3/OpenAI-compatible harness as `trail eval`; it returns observed gate results for robotics, SaaS, and AI/ML.
+
+`trail eval-codex` is the agent-harness A/B. It launches isolated, ephemeral Codex CLI sessions with the same model, reasoning effort, six repository-action calls, task text, and starting commit. Only the guided condition receives the TRAIL stdio MCP server and an instruction to call `trail_build_context`; TRAIL calls are measured and reported separately rather than pretending context retrieval is free. The evaluator reruns human-owned fixture checks, inspects the Git diff, requires the expected reviewed trail, and treats agent prose as no evidence. Raw JSONL transcripts and reports stay under gitignored `.trail/evals/`.
 
 ## Quarantined research corpus
 
